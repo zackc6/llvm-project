@@ -5858,10 +5858,26 @@ static bool inferStaticShape(PackOp packOp, SmallVectorImpl<int64_t> &srcShape,
   return changeNeeded;
 }
 
+static bool isIdentityOuterDimsPermutation(ArrayRef<int64_t> perm) {
+  if (perm.empty())
+    return false;
+  for (auto [i, v] : llvm::enumerate(perm))
+    if (v != static_cast<int64_t>(i))
+      return false;
+  return true;
+}
+
 LogicalResult PackOp::canonicalize(PackOp packOp, PatternRewriter &rewriter) {
   // TODO: Support Memref PackOp. Temporarily return failure.
   if (!packOp.hasPureTensorSemantics())
     return failure();
+
+  // Canonicalize away explicit identity outer_dims_perm.
+  if (isIdentityOuterDimsPermutation(packOp.getOuterDimsPerm())) {
+    rewriter.modifyOpInPlace(
+        packOp, [&]() { packOp.setOuterDimsPermAttr(nullptr); });
+    return success();
+  }
 
   // Fold an pack(unpack(x)) to x.
   if (auto unPackOp = packOp.getSource().getDefiningOp<UnPackOp>()) {
@@ -6328,6 +6344,13 @@ LogicalResult UnPackOp::canonicalize(UnPackOp unPackOp,
   // TODO: Support Memref UnPackOp. Temporarily return failure.
   if (!unPackOp.hasPureTensorSemantics())
     return failure();
+
+  // Canonicalize away explicit identity outer_dims_perm.
+  if (isIdentityOuterDimsPermutation(unPackOp.getOuterDimsPerm())) {
+    rewriter.modifyOpInPlace(
+        unPackOp, [&]() { unPackOp.setOuterDimsPermAttr(nullptr); });
+    return success();
+  }
 
   /// unpack(pack(x)) -> x
   if (PackOp packOp = unPackOp.getSource().getDefiningOp<PackOp>()) {
