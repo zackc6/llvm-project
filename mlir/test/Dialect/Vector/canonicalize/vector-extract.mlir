@@ -126,3 +126,49 @@ func.func @extract_from_insert_vector_to_vector_broadcast(%src: vector<1xf32>) -
   %vec2 = vector.extract %vec1[0] : vector<1x1xf32> from vector<16x1x1xf32>
   return %vec2 : vector<1x1xf32>
 }
+
+// -----
+
+// Fold extract chains with mixed static + dynamic positions.
+//
+// CHECK-LABEL: func.func @extract_chain_mixed_positions
+// CHECK-SAME:    %[[ARG0:.*]]: vector<4x8x16xf32>, %[[I:.*]]: index, %[[J:.*]]: index
+// CHECK:         %[[RES:.*]] = vector.extract %[[ARG0]][%[[I]], 3, %[[J]]] : f32 from vector<4x8x16xf32>
+// CHECK-NOT:     vector.extract
+// CHECK:         return %[[RES]] : f32
+func.func @extract_chain_mixed_positions(%arg0: vector<4x8x16xf32>, %i: index, %j: index) -> f32 {
+  %0 = vector.extract %arg0[%i] : vector<8x16xf32> from vector<4x8x16xf32>
+  %1 = vector.extract %0[3, %j] : f32 from vector<8x16xf32>
+  return %1 : f32
+}
+
+// -----
+
+// Fold deep extract chains where all positions are dynamic.
+//
+// CHECK-LABEL: func.func @extract_chain_all_dynamic
+// CHECK-SAME:    %[[ARG0:.*]]: vector<2x4x8xf32>, %[[I:.*]]: index, %[[J:.*]]: index, %[[K:.*]]: index
+// CHECK:         %[[RES:.*]] = vector.extract %[[ARG0]][%[[I]], %[[J]], %[[K]]] : f32 from vector<2x4x8xf32>
+// CHECK-NOT:     vector.extract
+// CHECK:         return %[[RES]] : f32
+func.func @extract_chain_all_dynamic(%arg0: vector<2x4x8xf32>, %i: index, %j: index, %k: index) -> f32 {
+  %0 = vector.extract %arg0[%i] : vector<4x8xf32> from vector<2x4x8xf32>
+  %1 = vector.extract %0[%j] : vector<8xf32> from vector<4x8xf32>
+  %2 = vector.extract %1[%k] : f32 from vector<8xf32>
+  return %2 : f32
+}
+
+// -----
+
+// Fold extract chains while preserving poison sentinel indices.
+//
+// CHECK-LABEL: func.func @extract_chain_with_poison_index
+// CHECK-SAME:    %[[ARG0:.*]]: vector<4x8x16xf32>, %[[I:.*]]: index
+// CHECK:         %[[P:.*]] = ub.poison : f32
+// CHECK-NOT:     vector.extract
+// CHECK:         return %[[P]] : f32
+func.func @extract_chain_with_poison_index(%arg0: vector<4x8x16xf32>, %i: index) -> f32 {
+  %0 = vector.extract %arg0[%i] : vector<8x16xf32> from vector<4x8x16xf32>
+  %1 = vector.extract %0[-1, 2] : f32 from vector<8x16xf32>
+  return %1 : f32
+}

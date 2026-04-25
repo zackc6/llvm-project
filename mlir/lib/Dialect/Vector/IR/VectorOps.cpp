@@ -1413,27 +1413,28 @@ static LogicalResult foldExtractOpFromExtractChain(ExtractOp extractOp) {
   if (!extractOp.getSource().getDefiningOp<ExtractOp>())
     return failure();
 
-  // TODO: Canonicalization for dynamic position not implemented yet.
-  if (extractOp.hasDynamicPosition())
-    return failure();
-
-  SmallVector<int64_t> globalPosition;
+  SmallVector<OpFoldResult> globalPosition;
   ExtractOp currentOp = extractOp;
-  ArrayRef<int64_t> extrPos = currentOp.getStaticPosition();
-  globalPosition.append(extrPos.rbegin(), extrPos.rend());
+
+  // Walk extract(extract(...extract(source, p0), p1), ..., pn) from the
+  // innermost to the outermost extract and concatenate the positions.
+  SmallVector<OpFoldResult> currentPosition = currentOp.getMixedPosition();
+  globalPosition.append(currentPosition.rbegin(), currentPosition.rend());
   while (ExtractOp nextOp = currentOp.getSource().getDefiningOp<ExtractOp>()) {
     currentOp = nextOp;
-    // TODO: Canonicalization for dynamic position not implemented yet.
-    if (currentOp.hasDynamicPosition())
-      return failure();
-    ArrayRef<int64_t> extrPos = currentOp.getStaticPosition();
-    globalPosition.append(extrPos.rbegin(), extrPos.rend());
+    currentPosition = currentOp.getMixedPosition();
+    globalPosition.append(currentPosition.rbegin(), currentPosition.rend());
   }
-  extractOp.setOperand(0, currentOp.getSource());
-  // OpBuilder is only used as a helper to build an I64ArrayAttr.
-  OpBuilder b(extractOp.getContext());
+
   std::reverse(globalPosition.begin(), globalPosition.end());
-  extractOp.setStaticPosition(globalPosition);
+  auto [staticPosition, dynamicPosition] = decomposeMixedValues(globalPosition);
+
+  SmallVector<Value> newOperands;
+  newOperands.reserve(1 + dynamicPosition.size());
+  newOperands.push_back(currentOp.getSource());
+  llvm::append_range(newOperands, dynamicPosition);
+  extractOp->setOperands(newOperands);
+  extractOp.setStaticPosition(staticPosition);
   return success();
 }
 
